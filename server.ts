@@ -2,7 +2,7 @@ import express from 'express';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 
 const app = express();
 app.use(express.json());
