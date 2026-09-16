@@ -1,51 +1,41 @@
-import express from 'express';
-import { initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { getAuth } from 'firebase-admin/auth';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import crypto from 'node:crypto';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, getDoc, setDoc, updateDoc, increment, serverTimestamp } from 'firebase/firestore';
 
-const app = express();
-app.use(express.json());
+const app = new Hono();
 
-// Initialize Firebase Admin (Uses Application Default Credentials in production/Cloud Run)
-// In a real environment, you'd configure the service account.
-initializeApp({
+// Enable CORS
+app.use('*', cors());
+
+// Firebase client config
+const firebaseConfig = {
   projectId: "gen-lang-client-0163667078",
-});
+  appId: "1:638271136518:web:b935de69f34a181b997487",
+  apiKey: "AIzaSyB6jUo0n3twSTlo4UOS8EUP5LT5FgGVIP4",
+  authDomain: "gen-lang-client-0163667078.firebaseapp.com",
+  storageBucket: "gen-lang-client-0163667078.firebasestorage.app",
+  messagingSenderId: "638271136518"
+};
 
-const db = getFirestore();
-db.settings({ databaseId: "ai-studio-beed856d-c8cf-4b57-8b1f-f01c9896d3da" });
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp, "ai-studio-beed856d-c8cf-4b57-8b1f-f01c9896d3da");
 
-function verifyTelegramWebAppData(telegramInitData: string): any {
-  // In development without a real bot token, we'll bypass strict verification
-  // and simulate successful parsing for demo purposes if TELEGRAM_BOT_TOKEN is missing.
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  
+// Verify Telegram initData
+function verifyTelegramWebAppData(telegramInitData: string, botToken: string): any {
   const initData = new URLSearchParams(telegramInitData);
   const hash = initData.get('hash');
   
-  if (!token) {
-    console.warn("Missing TELEGRAM_BOT_TOKEN. Bypassing verification for development.");
-    const userStr = initData.get('user');
-    if (!userStr) throw new Error("No user in initData");
-    return JSON.parse(decodeURIComponent(userStr));
-  }
-
   if (!hash) {
     throw new Error('No hash provided');
   }
 
-  // Remove hash from the data to verify
   initData.delete('hash');
-  
-  // Sort the keys alphabetically
   const keys = Array.from(initData.keys()).sort();
   const dataCheckString = keys.map(key => `${key}=${initData.get(key)}`).join('\n');
 
-  // Compute secret key
-  const secretKey = crypto.createHmac('sha256', 'WebAppData').update(token).digest();
-  
-  // Compute hash
+  const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
   const computedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
   if (computedHash !== hash) {
@@ -58,99 +48,136 @@ function verifyTelegramWebAppData(telegramInitData: string): any {
   return JSON.parse(decodeURIComponent(userStr));
 }
 
-// Routes
-app.post('/api/auth/telegram', async (req, res) => {
+// Sign custom token JWT with RS256
+function signCustomToken(userId: string, serviceAccount: { client_email: string; private_key: string }) {
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: serviceAccount.client_email,
+    sub: serviceAccount.client_email,
+    aud: 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit',
+    iat: now,
+    exp: now + 3600,
+    uid: userId
+  };
+
+  const base64UrlEncode = (obj: any) => {
+    return Buffer.from(JSON.stringify(obj))
+      .toString('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  };
+
+  const encodedHeader = base64UrlEncode(header);
+  const encodedPayload = base64UrlEncode(payload);
+  const tokenData = `${encodedHeader}.${encodedPayload}`;
+
+  const sign = crypto.createSign('RSA-SHA256');
+  sign.update(tokenData);
+  const signature = sign.sign(serviceAccount.private_key, 'base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+
+  return `${tokenData}.${signature}`;
+}
+
+app.post('/api/auth/telegram', async (c) => {
   try {
-    const { initData, referralCode } = req.body;
-    
+    const body = await c.req.json();
+    const { initData, referralCode } = body;
+
     if (!initData) {
-      return res.status(400).json({ error: 'Missing initData' });
+      return c.json({ error: 'Missing initData' }, 400);
     }
 
-    const tgUser = verifyTelegramWebAppData(initData);
+    // Read secrets/variables from env (Cloudflare Worker secrets)
+    const env = (c.env || {}) as any;
+    const telegramBotToken = env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+    const clientEmail = env.FIREBASE_CLIENT_EMAIL || process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = env.FIREBASE_PRIVATE_KEY || process.env.FIREBASE_PRIVATE_KEY;
+
+    let tgUser;
+    if (!telegramBotToken) {
+      console.warn("Missing TELEGRAM_BOT_TOKEN. Bypassing verification for development.");
+      const params = new URLSearchParams(initData);
+      const userStr = params.get('user');
+      if (!userStr) return c.json({ error: 'No user in initData' }, 400);
+      tgUser = JSON.parse(decodeURIComponent(userStr));
+    } else {
+      tgUser = verifyTelegramWebAppData(initData, telegramBotToken);
+    }
+
     const userId = tgUser.id.toString();
 
     // Create or update user in Firestore
-    const userRef = db.collection('users').doc(userId);
-    const userDoc = await userRef.get();
-    
-    const initials = (tgUser.first_name?.[0] || '') + (tgUser.last_name?.[0] || '');
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
 
-    if (!userDoc.exists) {
+    const initials = ((tgUser.first_name?.[0] || '') + (tgUser.last_name?.[0] || '')).toUpperCase();
+
+    if (!userSnap.exists()) {
       // New user
-      await userRef.set({
+      await setDoc(userRef, {
         telegramId: userId,
         username: tgUser.username || '',
         firstName: tgUser.first_name || '',
         lastName: tgUser.last_name || '',
-        initials: initials.toUpperCase(),
+        initials: initials,
         photoUrl: tgUser.photo_url || '',
-        createdAt: FieldValue.serverTimestamp(),
-        lastActiveAt: FieldValue.serverTimestamp(),
+        createdAt: serverTimestamp(),
+        lastActiveAt: serverTimestamp(),
         invitedCount: 0,
         referredBy: referralCode || null,
         referralCode: `ref_${userId}`
       });
-      
+
       // If referred, update the referrer
       if (referralCode && referralCode.startsWith('ref_')) {
         const referrerId = referralCode.replace('ref_', '');
         if (referrerId !== userId) {
-          const referrerRef = db.collection('users').doc(referrerId);
-          await referrerRef.update({
-            invitedCount: FieldValue.increment(1)
+          const referrerRef = doc(db, 'users', referrerId);
+          await updateDoc(referrerRef, {
+            invitedCount: increment(1)
           });
         }
       }
     } else {
       // Update existing
-      await userRef.update({
+      await updateDoc(userRef, {
         username: tgUser.username || '',
         firstName: tgUser.first_name || '',
         lastName: tgUser.last_name || '',
-        initials: initials.toUpperCase(),
+        initials: initials,
         photoUrl: tgUser.photo_url || '',
-        lastActiveAt: FieldValue.serverTimestamp()
+        lastActiveAt: serverTimestamp()
       });
     }
 
     // Mint custom token
-    const customToken = await getAuth().createCustomToken(userId);
-    
-    res.json({ token: customToken });
-  } catch (error) {
+    let customToken;
+    if (clientEmail && privateKey) {
+      // Sign with real credentials
+      customToken = signCustomToken(userId, {
+        client_email: clientEmail,
+        private_key: privateKey.replace(/\\n/g, '\n') // Handle escaped newlines
+      });
+    } else {
+      // If credentials are not set yet, return a mock token for local testing
+      console.warn("Missing FIREBASE_CLIENT_EMAIL or FIREBASE_PRIVATE_KEY. Returning unsigned token for testing.");
+      customToken = `mock_token_for_user_${userId}`;
+    }
+
+    return c.json({ token: customToken });
+  } catch (error: any) {
     console.error("Auth error:", error);
-    res.status(401).json({ error: 'Unauthorized' });
+    return c.json({ error: error.message || 'Unauthorized' }, 401);
   }
 });
 
-app.get('/api/ping', (req, res) => {
-  res.json({ status: 'ok' });
+app.get('/api/ping', (c) => {
+  return c.json({ status: 'ok' });
 });
 
-
-async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production';
-  
-  if (!isProd) {
-    // In development mode, use Vite middleware
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    // In production, serve the built client
-    app.use(express.static('dist/client'));
-    app.get('*', (req, res) => {
-      res.sendFile('index.html', { root: 'dist/client' });
-    });
-  }
-
-  app.listen(3000, "0.0.0.0", () => {
-    console.log(`Server running at http://localhost:3000`);
-  });
-}
-
-startServer();
+export default app;
