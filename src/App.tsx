@@ -19,7 +19,7 @@ export default function App() {
   return (
     <Router>
       <AuthProvider>
-        <div className="w-full max-w-xl mx-auto relative min-h-screen flex flex-col bg-[#1c1c1e] text-white font-sans selection:bg-blue-500/30 md:shadow-2xl md:border-x md:border-white/5">
+        <div className="w-full max-w-xl mx-auto relative min-h-screen flex flex-col bg-gray-50 text-gray-900 font-sans selection:bg-blue-500/30 md:shadow-2xl md:border-x md:border-gray-200">
           <TopBar />
           <AddToHomePopup />
           <Routes>
