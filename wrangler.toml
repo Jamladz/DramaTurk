@@ -1,0 +1,11 @@
+name = "drama-turk-api"
+main = "server.ts"
+compatibility_date = "2024-03-20"
+node_compat = true
+
+[build]
+command = "npm run build"
+
+# You will need to add environment variables in your Cloudflare dashboard
+# [vars]
+# TELEGRAM_BOT_TOKEN = "your_bot_token_here"

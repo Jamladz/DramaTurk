@@ -1,0 +1,6 @@
+{
+  "name": "Drama Turk",
+  "description": "Turkish TV series and weekly episodes platform designed for Telegram users.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
