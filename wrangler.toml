@@ -6,6 +6,11 @@ compatibility_flags = ["nodejs_compat"]
 [build]
 command = "npm run build"
 
+[assets]
+directory = "./dist/client"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
 # You will need to add environment variables in your Cloudflare dashboard
 # [vars]
 # TELEGRAM_BOT_TOKEN = "your_bot_token_here"
