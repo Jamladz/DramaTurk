@@ -4,16 +4,19 @@ export function useTelegram() {
   const [tg, setTg] = useState(window.Telegram?.WebApp);
 
   useEffect(() => {
-    const tgApp = window.Telegram?.WebApp;
+    const tgApp = (window as any).Telegram?.WebApp;
     if (tgApp) {
       setTg(tgApp);
       tgApp.ready();
       
-      // Expand to full screen as requested
+      // Expand and request fullscreen officially as requested
       try {
         tgApp.expand();
+        if (typeof tgApp.requestFullscreen === 'function') {
+          tgApp.requestFullscreen();
+        }
       } catch (e) {
-        // Ignore expand errors
+        // Ignore expand or fullscreen errors
       }
     }
   }, []);

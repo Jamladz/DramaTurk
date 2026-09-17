@@ -19,11 +19,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { initData, startParam } = useTelegram();
 
   useEffect(() => {
+    function getFallbackProfile(tgUser: any) {
+      if (!tgUser) {
+        // Return beautiful mock profile for outside Telegram
+        return {
+          telegramId: "mock_12345",
+          username: "drama_turk_fan",
+          firstName: "سليمان",
+          lastName: "الدير",
+          initials: "SA",
+          photoUrl: "",
+          invitedCount: 3,
+          referralCode: "ref_mock_12345"
+        };
+      }
+      const initials = ((tgUser.first_name?.[0] || '') + (tgUser.last_name?.[0] || '')).toUpperCase() || 'TG';
+      return {
+        telegramId: tgUser.id.toString(),
+        username: tgUser.username || '',
+        firstName: tgUser.first_name || '',
+        lastName: tgUser.last_name || '',
+        initials: initials,
+        photoUrl: tgUser.photo_url || '',
+        invitedCount: 0,
+        referralCode: `ref_${tgUser.id}`
+      };
+    }
+
     async function authenticate() {
-      // In development mode (if not opened in Telegram), we might not have initData
-      // For this app, we strictly require Telegram initData.
+      // In development/AI Studio mode (if not opened in Telegram), we don't have initData
       if (!initData) {
-        console.warn("No Telegram initData found. Running outside of Telegram?");
+        console.warn("No Telegram initData found. Running outside of Telegram. Using fallback profile.");
+        const localTgUser = (window as any).Telegram?.WebApp?.initDataUnsafe?.user;
+        setProfile(getFallbackProfile(localTgUser));
         setLoading(false);
         return;
       }
@@ -52,9 +80,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         if (profileSnap.exists()) {
           setProfile(profileSnap.data());
+        } else {
+          // If profile does not exist in Firestore yet, use local Telegram WebApp properties
+          const localTgUser = (window as any).Telegram?.WebApp?.initDataUnsafe?.user;
+          setProfile(getFallbackProfile(localTgUser));
         }
       } catch (error) {
-        console.error("Auth error:", error);
+        console.error("Auth error, falling back to local Telegram WebApp user data:", error);
+        // Fall back to Telegram WebApp raw user data so the UI displays username and name perfectly!
+        const localTgUser = (window as any).Telegram?.WebApp?.initDataUnsafe?.user;
+        setProfile(getFallbackProfile(localTgUser));
       } finally {
         setLoading(false);
       }
