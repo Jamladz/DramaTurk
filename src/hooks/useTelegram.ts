@@ -9,11 +9,20 @@ export function useTelegram() {
       setTg(tgApp);
       tgApp.ready();
       
-      // Expand to full screen as requested
+      // Expand to full screen as requested (Official Telegram Method)
       try {
-        tgApp.expand();
+        if (tgApp.requestFullscreen) {
+          tgApp.requestFullscreen();
+        } else {
+          tgApp.expand();
+        }
       } catch (e) {
-        // Ignore expand errors
+        // Fallback to expand if requestFullscreen fails
+        try {
+          tgApp.expand();
+        } catch (innerError) {
+          console.error("Telegram expand error:", innerError);
+        }
       }
     }
   }, []);

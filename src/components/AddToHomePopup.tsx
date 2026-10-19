@@ -13,17 +13,22 @@ export function AddToHomePopup() {
 
     // Wait a bit before showing to not overwhelm the user
     const timer = setTimeout(() => {
-      // Use official Telegram check if available (introduced in recent versions)
-      if (tg?.checkHomeScreenStatus) {
-        tg.checkHomeScreenStatus((status) => {
-          if (status === 'missed' || status === 'unknown') {
-            setShow(true);
-          }
-        });
-      } else {
-        // Fallback for older clients that don't support checking
+      // Use official Telegram check if available (introduced in version 7.0)
+      if (tg?.isVersionAtLeast?.('7.0') && tg?.checkHomeScreenStatus) {
+        try {
+          tg.checkHomeScreenStatus((status) => {
+            if (status === 'missed' || status === 'unknown') {
+              setShow(true);
+            }
+          });
+        } catch (e) {
+          console.warn("Failed to check home screen status:", e);
+        }
+      } else if (tg?.isVersionAtLeast?.('7.0')) {
+        // If version >= 7.0 but status check is missing for some reason
         setShow(true);
       }
+      // For version < 7.0, we don't show the popup as addToHomeScreen is not supported
     }, 3000);
 
     return () => clearTimeout(timer);

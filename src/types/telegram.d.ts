@@ -90,6 +90,8 @@ declare global {
         };
         addToHomeScreen?(): void; // Newly introduced capability for some clients
         checkHomeScreenStatus?(callback: (status: 'unsupported' | 'unknown' | 'added' | 'missed') => void): void;
+        isVersionAtLeast(version: string): boolean;
+        requestFullscreen?(): void;
         ready(): void;
         expand(): void;
         close(): void;
