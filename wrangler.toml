@@ -1,7 +1,7 @@
-name = "drama-turk-api"
+name = "dramaturk"
 main = "server.ts"
 compatibility_date = "2024-10-18"
-compatibility_flags = [ "nodejs_compat" ]
+compatibility_flags = [ "nodejs_compat", "unsafe_eval" ]
 
 [build]
 command = "npm run build"
