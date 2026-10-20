@@ -1,24 +1,28 @@
-import express from 'express';
+import { Hono } from 'hono';
+import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
-import crypto from 'crypto';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const app = express();
-app.use(express.json());
+const app = new Hono();
 
-// Initialize Firebase Admin (Uses Application Default Credentials in production/Cloud Run)
-// In a real environment, you'd configure the service account.
-initializeApp({
-  projectId: "gen-lang-client-0163667078",
-});
+// Initialize Firebase Admin
+try {
+  initializeApp({
+    projectId: "gen-lang-client-0163667078",
+  });
+} catch (e) {
+  console.error("Firebase Admin initialization error:", e);
+}
 
 const db = getFirestore();
 db.settings({ databaseId: "ai-studio-beed856d-c8cf-4b57-8b1f-f01c9896d3da" });
 
 function verifyTelegramWebAppData(telegramInitData: string): any {
-  // In development without a real bot token, we'll bypass strict verification
-  // and simulate successful parsing for demo purposes if TELEGRAM_BOT_TOKEN is missing.
   const token = process.env.TELEGRAM_BOT_TOKEN;
   
   const initData = new URLSearchParams(telegramInitData);
@@ -35,17 +39,12 @@ function verifyTelegramWebAppData(telegramInitData: string): any {
     throw new Error('No hash provided');
   }
 
-  // Remove hash from the data to verify
   initData.delete('hash');
   
-  // Sort the keys alphabetically
   const keys = Array.from(initData.keys()).sort();
   const dataCheckString = keys.map(key => `${key}=${initData.get(key)}`).join('\n');
 
-  // Compute secret key
   const secretKey = crypto.createHmac('sha256', 'WebAppData').update(token).digest();
-  
-  // Compute hash
   const computedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
   if (computedHash !== hash) {
@@ -58,13 +57,14 @@ function verifyTelegramWebAppData(telegramInitData: string): any {
   return JSON.parse(decodeURIComponent(userStr));
 }
 
-// Routes
-app.post('/api/auth/telegram', async (req, res) => {
+// API Routes
+app.post('/api/auth/telegram', async (c) => {
   try {
-    const { initData, referralCode } = req.body;
+    const body = await c.req.json();
+    const { initData, referralCode } = body;
     
     if (!initData) {
-      return res.status(400).json({ error: 'Missing initData' });
+      return c.json({ error: 'Missing initData' }, 400);
     }
 
     const tgUser = verifyTelegramWebAppData(initData);
@@ -77,7 +77,6 @@ app.post('/api/auth/telegram', async (req, res) => {
     const initials = (tgUser.first_name?.[0] || '') + (tgUser.last_name?.[0] || '');
 
     if (!userDoc.exists) {
-      // New user
       await userRef.set({
         telegramId: userId,
         username: tgUser.username || '',
@@ -92,7 +91,6 @@ app.post('/api/auth/telegram', async (req, res) => {
         referralCode: `ref_${userId}`
       });
       
-      // If referred, update the referrer
       if (referralCode && referralCode.startsWith('ref_')) {
         const referrerId = referralCode.replace('ref_', '');
         if (referrerId !== userId) {
@@ -103,7 +101,6 @@ app.post('/api/auth/telegram', async (req, res) => {
         }
       }
     } else {
-      // Update existing
       await userRef.update({
         username: tgUser.username || '',
         firstName: tgUser.first_name || '',
@@ -114,43 +111,40 @@ app.post('/api/auth/telegram', async (req, res) => {
       });
     }
 
-    // Mint custom token
     const customToken = await getAuth().createCustomToken(userId);
-    
-    res.json({ token: customToken });
+    return c.json({ token: customToken });
   } catch (error) {
     console.error("Auth error:", error);
-    res.status(401).json({ error: 'Unauthorized' });
+    return c.json({ error: 'Unauthorized' }, 401);
   }
 });
 
-app.get('/api/ping', (req, res) => {
-  res.json({ status: 'ok' });
+app.get('/api/ping', (c) => {
+  return c.json({ status: 'ok' });
 });
 
+// Serve static files (assets)
+app.use('/assets/*', serveStatic({ root: './dist/client' }));
 
-async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production';
-  
-  if (!isProd) {
-    // In development mode, use Vite middleware
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    // In production, serve the built client
-    app.use(express.static('dist/client'));
-    app.get('*', (req, res) => {
-      res.sendFile('index.html', { root: 'dist/client' });
-    });
+// SPA Fallback: Serve index.html for all other routes
+app.get('*', async (c) => {
+  const filePath = path.resolve('./dist/client/index.html');
+  if (fs.existsSync(filePath)) {
+    const html = fs.readFileSync(filePath, 'utf-8');
+    return c.html(html);
   }
+  return c.text('Frontend not built. Please run npm run build.', 404);
+});
 
-  app.listen(3000, "0.0.0.0", () => {
-    console.log(`Server running at http://localhost:3000`);
+// For development/Node.js environments (like AI Studio preview)
+if (typeof EdgeRuntime !== 'string' && !globalThis.hasOwnProperty('WebSocketPair')) {
+  const port = 3000;
+  console.log(`Server running at http://localhost:${port}`);
+  serve({
+    fetch: app.fetch,
+    port
   });
 }
 
-startServer();
+// Export for Cloudflare Workers
+export default app;
